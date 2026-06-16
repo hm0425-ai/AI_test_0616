@@ -1,0 +1,123 @@
+// 보듬TV 반려견 훈련 AI 에이전트 - DB 스키마
+// pgvector 확장을 사용한 PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 유튜브 영상 메타데이터 + 전사 텍스트
+model Video {
+  id          String   @id @default(cuid())
+  youtubeId   String   @unique
+  title       String
+  description String   @db.Text
+  url         String
+  thumbnailUrl String
+  publishedAt DateTime
+  duration    Int? // seconds
+  transcript  String?  @db.Text
+  transcriptStatus TranscriptStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  chunks      Chunk[]
+
+  @@index([publishedAt])
+}
+
+enum TranscriptStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+/// RAG용 텍스트 청크 + 임베딩
+model Chunk {
+  id          String   @id @default(cuid())
+  videoId     String
+  video       Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  content     String   @db.Text
+  startSec    Int? // 타임스탬프(초) - 출처 표기용
+  endSec      Int?
+  embedding   Unsupported("vector(1536)")?
+  createdAt   DateTime @default(now())
+
+  @@index([videoId])
+}
+
+/// 채팅 세션
+model ChatSession {
+  id        String    @id @default(cuid())
+  userId    String?
+  title     String?
+  createdAt DateTime  @default(now())
+  messages  ChatMessage[]
+}
+
+model ChatMessage {
+  id            String      @id @default(cuid())
+  sessionId     String
+  session       ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role          MessageRole
+  content       String      @db.Text
+  sources       Json? // [{videoId, title, url, timestampSec}]
+  audioUrl      String?
+  createdAt     DateTime    @default(now())
+
+  @@index([sessionId])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+/// 관리자 설정 (API Key 등) - 값은 암호화하여 저장 권장
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g. OPENAI_API_KEY, ELEVENLABS_API_KEY
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+/// Voice Cloning된 보이스 프로필
+model VoiceProfile {
+  id              String   @id @default(cuid())
+  name            String
+  provider        String   @default("elevenlabs")
+  elevenLabsVoiceId String?
+  gender          VoiceGender
+  isDefault       Boolean  @default(false)
+  sampleAudioUrl  String?
+  createdAt       DateTime @default(now())
+}
+
+enum VoiceGender {
+  MALE
+  FEMALE
+  CLONED
+}
+
+/// 영상 수집 작업 로그 (Information Collection Agent)
+model CollectionJob {
+  id           String   @id @default(cuid())
+  status       JobStatus @default(RUNNING)
+  newVideos    Int       @default(0)
+  failedVideos Int       @default(0)
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  log          String?   @db.Text
+}
+
+enum JobStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
