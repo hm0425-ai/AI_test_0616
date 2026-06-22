@@ -13,14 +13,24 @@ export function VideoPreview() {
             AI가 답변에 활용하는 실제 영상 콘텐츠입니다.
           </p>
         </div>
-        <Link href="/videos" className="text-sm font-medium text-sky-600 hover:underline">
+        <a
+          href="https://www.youtube.com/@Bodeumofficial"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm font-medium text-sky-600 hover:underline"
+        >
           전체 보기 →
-        </Link>
+        </a>
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {mockVideos.map((video) => (
-          <Link key={video.id} href={`/videos/${video.id}`}>
+          <a
+            key={video.id}
+            href={video.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <Card className="group overflow-hidden border-white/60 bg-white/70 backdrop-blur transition hover:-translate-y-1 hover:shadow-lg dark:bg-white/5">
               <div className="relative aspect-video bg-muted">
                 <Image
@@ -35,7 +45,7 @@ export function VideoPreview() {
                 <p className="mt-1 text-xs text-muted-foreground">{video.publishedAt}</p>
               </div>
             </Card>
-          </Link>
+          </a>
         ))}
       </div>
     </section>
