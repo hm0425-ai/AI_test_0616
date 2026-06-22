@@ -22,11 +22,21 @@ const STATUS_LABEL: Record<Status, string> = {
   error: "다시 시도해주세요",
 };
 
+function speakWithBrowser(text: string, onEnd: () => void) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ko-KR";
+  utterance.rate = 1.0;
+  utterance.onend = onEnd;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
 export default function VoicePage() {
   const [status, setStatus] = useState<Status>("idle");
   const [transcript, setTranscript] = useState("");
   const [answer, setAnswer] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [ttsMode, setTtsMode] = useState<"elevenlabs" | "browser">("elevenlabs");
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const statusRef = useRef<Status>("idle");
@@ -37,12 +47,44 @@ export default function VoicePage() {
     setStatus(s);
   }
 
+  async function speakAnswer(text: string) {
+    // 1. ElevenLabs 시도
+    try {
+      const ttsRes = await fetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (ttsRes.ok) {
+        const blob = await ttsRes.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        updateStatus("speaking");
+        setTtsMode("elevenlabs");
+        audio.play();
+        audio.onended = () => {
+          updateStatus("idle");
+          URL.revokeObjectURL(url);
+        };
+        return;
+      }
+    } catch {
+      // ElevenLabs 실패 시 브라우저 TTS로 폴백
+    }
+
+    // 2. 브라우저 기본 TTS 폴백
+    setTtsMode("browser");
+    updateStatus("speaking");
+    speakWithBrowser(text, () => updateStatus("idle"));
+  }
+
   async function processQuestion(text: string) {
     setTranscript(text);
     updateStatus("processing");
 
     try {
-      // 1. AI 텍스트 답변
       const chatRes = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,28 +95,7 @@ export default function VoicePage() {
         data.answer || data.error || "답변을 생성하지 못했습니다.";
       setAnswer(answerText);
 
-      // 2. ElevenLabs TTS
-      const ttsRes = await fetch("/api/voice/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: answerText }),
-      });
-
-      if (!ttsRes.ok) {
-        const errData = await ttsRes.json().catch(() => ({}));
-        throw new Error(errData.error || "음성 변환에 실패했습니다.");
-      }
-
-      const blob = await ttsRes.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      updateStatus("speaking");
-      audio.play();
-      audio.onended = () => {
-        updateStatus("idle");
-        URL.revokeObjectURL(url);
-      };
+      await speakAnswer(answerText);
     } catch (err: any) {
       setErrorMsg(err.message ?? "오류가 발생했습니다.");
       updateStatus("error");
@@ -164,7 +185,6 @@ export default function VoicePage() {
       setErrorMsg(err.message ?? "오류가 발생했습니다.");
       updateStatus("error");
     } finally {
-      // 같은 파일 재업로드 허용
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -188,7 +208,6 @@ export default function VoicePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 pb-8">
-            {/* 버튼 영역 */}
             <div className="flex items-center justify-center gap-6">
               {/* 마이크 버튼 */}
               <div className="flex flex-col items-center gap-2">
@@ -244,11 +263,14 @@ export default function VoicePage() {
             </div>
 
             <p className="text-sm text-muted-foreground">{STATUS_LABEL[status]}</p>
-            <p className="text-xs text-muted-foreground">
-              지원 파일: mp3, wav, m4a, ogg, webm
-            </p>
+            <p className="text-xs text-muted-foreground">지원 파일: mp3, wav, m4a, ogg, webm</p>
 
-            {/* 질문 표시 */}
+            {status === "speaking" && (
+              <p className="text-xs text-muted-foreground">
+                {ttsMode === "browser" ? "🔊 브라우저 기본 음성으로 재생 중" : "🎙️ ElevenLabs 음성으로 재생 중"}
+              </p>
+            )}
+
             {transcript && (
               <div className="rounded-xl bg-muted px-5 py-4 text-left">
                 <p className="mb-1 text-xs font-semibold text-muted-foreground">내 질문</p>
@@ -256,7 +278,6 @@ export default function VoicePage() {
               </div>
             )}
 
-            {/* AI 답변 표시 */}
             {answer && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left dark:border-emerald-800 dark:bg-emerald-950/30">
                 <p className="mb-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
@@ -266,15 +287,9 @@ export default function VoicePage() {
               </div>
             )}
 
-            {/* 오류 메시지 */}
             {errorMsg && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-left dark:border-red-800 dark:bg-red-950/30">
                 <p className="text-sm text-red-600 dark:text-red-400">{errorMsg}</p>
-                {errorMsg.includes("ElevenLabs") && (
-                  <a href="/admin/settings" className="mt-1 block text-xs underline text-red-500">
-                    → 관리자 설정에서 ElevenLabs API Key를 등록하세요
-                  </a>
-                )}
               </div>
             )}
           </CardContent>
