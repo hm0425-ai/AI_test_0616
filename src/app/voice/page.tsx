@@ -28,13 +28,19 @@ export default function VoicePage() {
   const [errorMsg, setErrorMsg] = useState("");
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const statusRef = useRef<Status>("idle");
+
+  function updateStatus(s: Status) {
+    statusRef.current = s;
+    setStatus(s);
+  }
 
   async function handleMicClick() {
-    if (status === "listening") {
+    if (statusRef.current === "listening") {
       recognitionRef.current?.stop();
       return;
     }
-    if (status === "processing" || status === "speaking") return;
+    if (statusRef.current === "processing" || statusRef.current === "speaking") return;
 
     setErrorMsg("");
     setTranscript("");
@@ -45,10 +51,8 @@ export default function VoicePage() {
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      setErrorMsg(
-        "이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요."
-      );
-      setStatus("error");
+      setErrorMsg("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.");
+      updateStatus("error");
       return;
     }
 
@@ -58,12 +62,12 @@ export default function VoicePage() {
     recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
 
-    recognition.onstart = () => setStatus("listening");
+    recognition.onstart = () => updateStatus("listening");
 
     recognition.onresult = async (event: any) => {
       const text: string = event.results[0][0].transcript;
       setTranscript(text);
-      setStatus("processing");
+      updateStatus("processing");
 
       try {
         const chatRes = await fetch("/api/chat", {
@@ -91,15 +95,15 @@ export default function VoicePage() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
-        setStatus("speaking");
+        updateStatus("speaking");
         audio.play();
         audio.onended = () => {
-          setStatus("idle");
+          updateStatus("idle");
           URL.revokeObjectURL(url);
         };
       } catch (err: any) {
         setErrorMsg(err.message ?? "오류가 발생했습니다.");
-        setStatus("error");
+        updateStatus("error");
       }
     };
 
@@ -109,7 +113,13 @@ export default function VoicePage() {
       } else {
         setErrorMsg(`음성 인식 오류: ${event.error}`);
       }
-      setStatus("error");
+      updateStatus("error");
+    };
+
+    recognition.onend = () => {
+      if (statusRef.current === "listening") {
+        updateStatus("idle");
+      }
     };
 
     recognition.start();
@@ -153,15 +163,11 @@ export default function VoicePage() {
               )}
             </button>
 
-            <p className="text-sm text-muted-foreground">
-              {STATUS_LABEL[status]}
-            </p>
+            <p className="text-sm text-muted-foreground">{STATUS_LABEL[status]}</p>
 
             {transcript && (
               <div className="rounded-xl bg-muted px-5 py-4 text-left">
-                <p className="mb-1 text-xs font-semibold text-muted-foreground">
-                  내 질문
-                </p>
+                <p className="mb-1 text-xs font-semibold text-muted-foreground">내 질문</p>
                 <p className="text-sm">{transcript}</p>
               </div>
             )}
@@ -177,14 +183,9 @@ export default function VoicePage() {
 
             {errorMsg && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-left dark:border-red-800 dark:bg-red-950/30">
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  {errorMsg}
-                </p>
+                <p className="text-sm text-red-600 dark:text-red-400">{errorMsg}</p>
                 {errorMsg.includes("ElevenLabs") && (
-                  <a
-                    href="/admin/settings"
-                    className="mt-1 block text-xs underline text-red-500"
-                  >
+                  <a href="/admin/settings" className="mt-1 block text-xs underline text-red-500">
                     → 관리자 설정에서 ElevenLabs API Key를 등록하세요
                   </a>
                 )}
