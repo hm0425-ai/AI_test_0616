@@ -1,5 +1,4 @@
 import Image from "next/image";
-import Link from "next/link";
 import { mockVideos } from "@/lib/mock-data";
 import { Card } from "@/components/ui/card";
 
