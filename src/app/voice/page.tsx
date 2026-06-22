@@ -9,13 +9,14 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Mic, MicOff, Loader2, Upload } from "lucide-react";
 
-type Status = "idle" | "listening" | "processing" | "speaking" | "error";
+type Status = "idle" | "listening" | "transcribing" | "processing" | "speaking" | "error";
 
 const STATUS_LABEL: Record<Status, string> = {
-  idle: "탭하여 말하기",
+  idle: "마이크 버튼을 누르거나 파일을 업로드하세요",
   listening: "듣고 있습니다... (다시 누르면 중지)",
+  transcribing: "음성을 텍스트로 변환 중...",
   processing: "답변 생성 중...",
   speaking: "답변을 읽고 있습니다...",
   error: "다시 시도해주세요",
@@ -29,10 +30,55 @@ export default function VoicePage() {
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const statusRef = useRef<Status>("idle");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function updateStatus(s: Status) {
     statusRef.current = s;
     setStatus(s);
+  }
+
+  async function processQuestion(text: string) {
+    setTranscript(text);
+    updateStatus("processing");
+
+    try {
+      // 1. AI 텍스트 답변
+      const chatRes = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text }),
+      });
+      const data = await chatRes.json();
+      const answerText: string =
+        data.answer || data.error || "답변을 생성하지 못했습니다.";
+      setAnswer(answerText);
+
+      // 2. ElevenLabs TTS
+      const ttsRes = await fetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: answerText }),
+      });
+
+      if (!ttsRes.ok) {
+        const errData = await ttsRes.json().catch(() => ({}));
+        throw new Error(errData.error || "음성 변환에 실패했습니다.");
+      }
+
+      const blob = await ttsRes.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      updateStatus("speaking");
+      audio.play();
+      audio.onended = () => {
+        updateStatus("idle");
+        URL.revokeObjectURL(url);
+      };
+    } catch (err: any) {
+      setErrorMsg(err.message ?? "오류가 발생했습니다.");
+      updateStatus("error");
+    }
   }
 
   async function handleMicClick() {
@@ -40,7 +86,7 @@ export default function VoicePage() {
       recognitionRef.current?.stop();
       return;
     }
-    if (statusRef.current === "processing" || statusRef.current === "speaking") return;
+    if (statusRef.current !== "idle" && statusRef.current !== "error") return;
 
     setErrorMsg("");
     setTranscript("");
@@ -51,7 +97,7 @@ export default function VoicePage() {
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      setErrorMsg("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.");
+      setErrorMsg("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용하거나 파일 업로드를 이용해주세요.");
       updateStatus("error");
       return;
     }
@@ -66,50 +112,12 @@ export default function VoicePage() {
 
     recognition.onresult = async (event: any) => {
       const text: string = event.results[0][0].transcript;
-      setTranscript(text);
-      updateStatus("processing");
-
-      try {
-        const chatRes = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: text }),
-        });
-        const data = await chatRes.json();
-        const answerText: string =
-          data.answer || data.error || "답변을 생성하지 못했습니다.";
-        setAnswer(answerText);
-
-        const ttsRes = await fetch("/api/voice/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: answerText }),
-        });
-
-        if (!ttsRes.ok) {
-          const errData = await ttsRes.json().catch(() => ({}));
-          throw new Error(errData.error || "음성 변환에 실패했습니다.");
-        }
-
-        const blob = await ttsRes.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audioRef.current = audio;
-        updateStatus("speaking");
-        audio.play();
-        audio.onended = () => {
-          updateStatus("idle");
-          URL.revokeObjectURL(url);
-        };
-      } catch (err: any) {
-        setErrorMsg(err.message ?? "오류가 발생했습니다.");
-        updateStatus("error");
-      }
+      await processQuestion(text);
     };
 
     recognition.onerror = (event: any) => {
       if (event.error === "no-speech") {
-        setErrorMsg("음성이 감지되지 않았습니다. 다시 시도해주세요.");
+        setErrorMsg("음성이 감지되지 않았습니다. 다시 시도하거나 파일을 업로드해주세요.");
       } else {
         setErrorMsg(`음성 인식 오류: ${event.error}`);
       }
@@ -125,7 +133,46 @@ export default function VoicePage() {
     recognition.start();
   }
 
-  const isDisabled = status === "processing" || status === "speaking";
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setErrorMsg("");
+    setTranscript("");
+    setAnswer("");
+    updateStatus("transcribing");
+
+    try {
+      const form = new FormData();
+      form.append("file", file);
+
+      const sttRes = await fetch("/api/voice/stt", {
+        method: "POST",
+        body: form,
+      });
+
+      if (!sttRes.ok) {
+        const errData = await sttRes.json().catch(() => ({}));
+        throw new Error(errData.error || "음성 파일 변환에 실패했습니다.");
+      }
+
+      const { transcript: text } = await sttRes.json();
+      if (!text) throw new Error("음성에서 텍스트를 인식하지 못했습니다.");
+
+      await processQuestion(text);
+    } catch (err: any) {
+      setErrorMsg(err.message ?? "오류가 발생했습니다.");
+      updateStatus("error");
+    } finally {
+      // 같은 파일 재업로드 허용
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  const isBusy =
+    status === "transcribing" ||
+    status === "processing" ||
+    status === "speaking";
 
   return (
     <>
@@ -135,36 +182,73 @@ export default function VoicePage() {
           <CardHeader>
             <CardTitle>음성 상담</CardTitle>
             <CardDescription>
-              마이크 버튼을 눌러 강아지 관련 질문을 말씀해 주세요.
+              마이크로 직접 질문하거나, 음성 파일을 업로드해 상담하세요.
               <br />
               보듬TV 영상 내용을 바탕으로 음성으로 답변해드립니다.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 pb-8">
-            <button
-              onClick={handleMicClick}
-              disabled={isDisabled}
-              className={[
-                "mx-auto flex h-24 w-24 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200",
-                status === "listening"
-                  ? "bg-red-500 animate-pulse scale-110"
-                  : status === "speaking"
-                  ? "bg-green-500"
-                  : "bg-gradient-to-br from-sky-400 to-emerald-400 hover:scale-105",
-                isDisabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
-              ].join(" ")}
-            >
-              {status === "processing" ? (
-                <Loader2 className="h-10 w-10 animate-spin" />
-              ) : status === "listening" ? (
-                <MicOff className="h-10 w-10" />
-              ) : (
-                <Mic className="h-10 w-10" />
-              )}
-            </button>
+            {/* 버튼 영역 */}
+            <div className="flex items-center justify-center gap-6">
+              {/* 마이크 버튼 */}
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  onClick={handleMicClick}
+                  disabled={isBusy}
+                  className={[
+                    "flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200",
+                    status === "listening"
+                      ? "bg-red-500 animate-pulse scale-110"
+                      : status === "speaking"
+                      ? "bg-green-500"
+                      : "bg-gradient-to-br from-sky-400 to-emerald-400 hover:scale-105",
+                    isBusy ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                  ].join(" ")}
+                >
+                  {isBusy && status !== "speaking" ? (
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  ) : status === "listening" ? (
+                    <MicOff className="h-8 w-8" />
+                  ) : (
+                    <Mic className="h-8 w-8" />
+                  )}
+                </button>
+                <span className="text-xs text-muted-foreground">마이크</span>
+              </div>
+
+              <span className="text-muted-foreground text-sm">또는</span>
+
+              {/* 파일 업로드 버튼 */}
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isBusy}
+                  className={[
+                    "flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200",
+                    "bg-gradient-to-br from-violet-400 to-purple-500 hover:scale-105",
+                    isBusy ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+                  ].join(" ")}
+                >
+                  <Upload className="h-8 w-8" />
+                </button>
+                <span className="text-xs text-muted-foreground">파일 업로드</span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                  disabled={isBusy}
+                />
+              </div>
+            </div>
 
             <p className="text-sm text-muted-foreground">{STATUS_LABEL[status]}</p>
+            <p className="text-xs text-muted-foreground">
+              지원 파일: mp3, wav, m4a, ogg, webm
+            </p>
 
+            {/* 질문 표시 */}
             {transcript && (
               <div className="rounded-xl bg-muted px-5 py-4 text-left">
                 <p className="mb-1 text-xs font-semibold text-muted-foreground">내 질문</p>
@@ -172,6 +256,7 @@ export default function VoicePage() {
               </div>
             )}
 
+            {/* AI 답변 표시 */}
             {answer && (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-left dark:border-emerald-800 dark:bg-emerald-950/30">
                 <p className="mb-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
@@ -181,6 +266,7 @@ export default function VoicePage() {
               </div>
             )}
 
+            {/* 오류 메시지 */}
             {errorMsg && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-left dark:border-red-800 dark:bg-red-950/30">
                 <p className="text-sm text-red-600 dark:text-red-400">{errorMsg}</p>
