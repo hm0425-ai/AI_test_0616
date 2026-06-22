@@ -50,26 +50,6 @@ export const mockVideos: MockVideo[] = [
     publishedAt: "2025-03-22",
     duration: 600,
   },
-  {
-    id: "v5",
-    youtubeId: "02rMn4giIUs",
-    title: "치와와 산책 많이 시키지 마세욜욜욜 | 견종백과 치와와편",
-    description: "강형욱의 보듬TV - 치와와 견종 소개",
-    url: "https://www.youtube.com/watch?v=02rMn4giIUs",
-    thumbnailUrl: "https://i.ytimg.com/vi/02rMn4giIUs/hqdefault.jpg",
-    publishedAt: "2025-03-10",
-    duration: 600,
-  },
-  {
-    id: "v6",
-    youtubeId: "xZ0fO7PLY9M",
-    title: "육아 난이도 0에 수렴. | 견종백과 시츄편",
-    description: "강형욱의 보듬TV - 시츄 견종 소개",
-    url: "https://www.youtube.com/watch?v=xZ0fO7PLY9M",
-    thumbnailUrl: "https://i.ytimg.com/vi/xZ0fO7PLY9M/hqdefault.jpg",
-    publishedAt: "2025-02-20",
-    duration: 600,
-  },
 ];
 
 export const mockSources = [
